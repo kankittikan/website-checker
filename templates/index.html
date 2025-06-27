@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Website Status Checker</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+        .loading-overlay {
+            background-color: rgba(255, 255, 255, 0.8);
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <div class="flex justify-between items-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-800">Website Status Checker</h1>
+            <a href="/logout" 
+               class="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition-colors">
+                Logout
+            </a>
+        </div>
+        
+        <!-- Add Website Form -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+            <form id="addWebsiteForm" class="flex gap-4">
+                <input type="url" id="websiteUrl" name="url" required
+                    class="flex-1 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Enter website URL (e.g., https://example.com)">
+                <button type="submit"
+                    class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition-colors">
+                    Add Website
+                </button>
+            </form>
+        </div>
+
+        <!-- Website List -->
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <div class="mb-4">
+                <h2 class="text-xl font-semibold text-gray-800">Monitored Websites</h2>
+                <p class="text-sm text-gray-500 mt-1">Auto-checking every minute</p>
+            </div>
+            <div id="websiteList" class="space-y-4 relative">
+                <!-- Loading overlay -->
+                <div id="loadingOverlay" class="hidden loading-overlay absolute inset-0 flex items-center justify-center rounded-lg">
+                    <div class="flex items-center gap-3 bg-white p-4 rounded-lg shadow-lg">
+                        <svg class="w-6 h-6 animate-spin text-blue-500" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span class="text-gray-700">Loading websites...</span>
+                    </div>
+                </div>
+                <!-- Websites will be populated here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Store website data globally
+        let websitesData = [];
+
+        // Function to format date to UTC+7
+        function formatDate(isoString) {
+            const date = new Date(isoString);
+            // Add 7 hours to convert to UTC+7
+            const utc7Date = new Date(date.getTime() + (7 * 60 * 60 * 1000));
+            return utc7Date.toLocaleString('en-US', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            }) + ' (UTC+7)';
+        }
+
+        // Function to show loading state
+        function setLoading(loading) {
+            const loadingOverlay = document.getElementById('loadingOverlay');
+            if (loading) {
+                loadingOverlay.classList.remove('hidden');
+            } else {
+                loadingOverlay.classList.add('hidden');
+            }
+        }
+
+        // Function to render the website list
+        function renderWebsiteList() {
+            const websiteList = document.getElementById('websiteList');
+            websiteList.innerHTML = websitesData.map(website => `
+                <div class="flex items-center justify-between p-4 border rounded-lg">
+                    <div class="flex items-center gap-4 flex-1">
+                        <span class="w-3 h-3 rounded-full ${website.status ? 'bg-green-500' : 'bg-red-500'}"></span>
+                        <div class="flex flex-col">
+                            <a href="${website.url}" target="_blank" class="text-blue-500 hover:underline">${website.url}</a>
+                            <span class="text-sm text-gray-500">Last checked: ${formatDate(website.last_checked)}</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <button onclick="toggleNotification('${website.url}')"
+                            class="flex items-center gap-2 px-3 py-1 rounded ${website.notify_on_down ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'} hover:bg-opacity-80 transition-colors">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                    d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9">
+                                </path>
+                            </svg>
+                            ${website.notify_on_down ? 'Notifications On' : 'Notifications Off'}
+                        </button>
+                        <button onclick="removeWebsite('${website.url}')"
+                            class="text-red-500 hover:text-red-600 transition-colors">
+                            Remove
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Function to update the website list from server
+        async function updateWebsiteList() {
+            try {
+                const response = await fetch('/check-status');
+                if (response.status === 303) {
+                    // Redirect to login if not authenticated
+                    window.location.href = '/login';
+                    return;
+                }
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                websitesData = await response.json();
+                renderWebsiteList();
+            } catch (error) {
+                console.error('Error updating website list:', error);
+                const websiteList = document.getElementById('websiteList');
+                websiteList.innerHTML = `
+                    <div class="p-4 bg-red-50 text-red-600 rounded-lg">
+                        Error loading websites. Please refresh the page.
+                    </div>
+                `;
+            }
+        }
+
+        // Add website form submission
+        document.getElementById('addWebsiteForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const submitButton = e.target.querySelector('button[type="submit"]');
+            const originalText = submitButton.textContent;
+            
+            try {
+                submitButton.textContent = 'Adding...';
+                submitButton.disabled = true;
+                const response = await fetch('/add-website', {
+                    method: 'POST',
+                    body: formData
+                });
+                if (response.status === 303) {
+                    // Redirect to login if not authenticated
+                    window.location.href = '/login';
+                    return;
+                }
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                e.target.reset();
+                window.location.reload();
+            } catch (error) {
+                console.error('Error adding website:', error);
+                alert('Failed to add website. Please try again.');
+            } finally {
+                submitButton.textContent = originalText;
+                submitButton.disabled = false;
+            }
+        });
+
+        // Remove website function
+        async function removeWebsite(url) {
+            try {
+                const formData = new FormData();
+                formData.append('url', url);
+                const response = await fetch('/remove-website', {
+                    method: 'POST',
+                    body: formData
+                });
+                if (response.status === 303) {
+                    // Redirect to login if not authenticated
+                    window.location.href = '/login';
+                    return;
+                }
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                window.location.reload();
+            } catch (error) {
+                console.error('Error removing website:', error);
+                alert('Failed to remove website. Please try again.');
+            }
+        }
+
+        // Toggle notification function
+        async function toggleNotification(url) {
+            try {
+                const formData = new FormData();
+                formData.append('url', url);
+                const response = await fetch('/toggle-notification', {
+                    method: 'POST',
+                    body: formData
+                });
+                if (response.status === 303) {
+                    // Redirect to login if not authenticated
+                    window.location.href = '/login';
+                    return;
+                }
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                await updateWebsiteList();
+            } catch (error) {
+                console.error('Error toggling notification:', error);
+                alert('Failed to toggle notification. Please try again.');
+            }
+        }
+
+        // Initial load
+        setLoading(true);
+        updateWebsiteList().finally(() => setLoading(false));
+
+        // Update times every second
+        setInterval(() => {
+            if (websitesData.length > 0) {
+                renderWebsiteList();
+            }
+        }, 1000);
+
+        // Poll for updates every minute
+        setInterval(async () => {
+            await updateWebsiteList();
+        }, 60000);
+    </script>
+</body>
+</html> 
