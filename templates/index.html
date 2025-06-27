@@ -62,6 +62,52 @@
         </div>
     </div>
 
+    <!-- Server Info Modal -->
+    <div id="serverInfoModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+        <div class="bg-white rounded-lg p-6 w-full max-w-lg">
+            <h3 class="text-xl font-semibold mb-4">Add Server Information</h3>
+            <form id="serverInfoForm">
+                <input type="hidden" id="serverInfoUrl" name="url">
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Host</label>
+                        <input type="text" name="host" required
+                            class="mt-1 w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="Server IP or hostname">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Username</label>
+                        <input type="text" name="username" required
+                            class="mt-1 w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="SSH username">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Password (optional)</label>
+                        <input type="password" name="password"
+                            class="mt-1 w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="SSH password">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">SSH Key Path (optional)</label>
+                        <input type="text" name="ssh_key_path"
+                            class="mt-1 w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="/path/to/ssh/key">
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-end gap-4">
+                    <button type="button" onclick="closeServerInfoModal()"
+                        class="px-4 py-2 border rounded-lg hover:bg-gray-50">
+                        Cancel
+                    </button>
+                    <button type="submit"
+                        class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
+                        Save
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
         // Store website data globally
         let websitesData = [];
@@ -92,33 +138,71 @@
             }
         }
 
+        // Function to render server metrics
+        function renderServerMetrics(serverInfo) {
+            if (!serverInfo) return '';
+            
+            const metrics = [
+                { label: 'CPU', value: serverInfo.cpu_usage, color: serverInfo.cpu_usage > 80 ? 'red' : 'green' },
+                { label: 'RAM', value: serverInfo.ram_usage, color: serverInfo.ram_usage > 80 ? 'red' : 'green' },
+                { label: 'Disk', value: serverInfo.disk_usage, color: serverInfo.disk_usage > 80 ? 'red' : 'green' }
+            ];
+
+            return `
+                <div class="mt-2 grid grid-cols-3 gap-4">
+                    ${metrics.map(metric => `
+                        <div class="flex flex-col items-center p-2 bg-gray-50 rounded">
+                            <span class="text-sm text-gray-600">${metric.label}</span>
+                            <span class="text-${metric.color}-600 font-semibold">
+                                ${metric.value ? metric.value.toFixed(1) + '%' : 'N/A'}
+                            </span>
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="mt-1 text-xs text-gray-500">
+                    Server metrics last updated: ${serverInfo.last_checked ? formatDate(serverInfo.last_checked) : 'Never'}
+                </div>
+            `;
+        }
+
         // Function to render the website list
         function renderWebsiteList() {
             const websiteList = document.getElementById('websiteList');
             websiteList.innerHTML = websitesData.map(website => `
-                <div class="flex items-center justify-between p-4 border rounded-lg">
-                    <div class="flex items-center gap-4 flex-1">
-                        <span class="w-3 h-3 rounded-full ${website.status ? 'bg-green-500' : 'bg-red-500'}"></span>
-                        <div class="flex flex-col">
-                            <a href="${website.url}" target="_blank" class="text-blue-500 hover:underline">${website.url}</a>
-                            <span class="text-sm text-gray-500">Last checked: ${formatDate(website.last_checked)}</span>
+                <div class="flex flex-col p-4 border rounded-lg">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-4 flex-1">
+                            <span class="w-3 h-3 rounded-full ${website.status ? 'bg-green-500' : 'bg-red-500'}"></span>
+                            <div class="flex flex-col">
+                                <a href="${website.url}" target="_blank" class="text-blue-500 hover:underline">${website.url}</a>
+                                <span class="text-sm text-gray-500">Last checked: ${formatDate(website.last_checked)}</span>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-4">
+                            <button onclick="toggleNotification('${website.url}')"
+                                class="flex items-center gap-2 px-3 py-1 rounded ${website.notify_on_down ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'} hover:bg-opacity-80 transition-colors">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                        d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9">
+                                    </path>
+                                </svg>
+                                ${website.notify_on_down ? 'Notifications On' : 'Notifications Off'}
+                            </button>
+                            <button onclick="openServerInfoModal('${website.url}')"
+                                class="flex items-center gap-2 px-3 py-1 rounded bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                                        d="M5 12h14M12 5l7 7-7 7"/>
+                                </svg>
+                                ${website.server_info ? 'Update Server Info' : 'Add Server Info'}
+                            </button>
+                            <button onclick="removeWebsite('${website.url}')"
+                                class="text-red-500 hover:text-red-600 transition-colors">
+                                Remove
+                            </button>
                         </div>
                     </div>
-                    <div class="flex items-center gap-4">
-                        <button onclick="toggleNotification('${website.url}')"
-                            class="flex items-center gap-2 px-3 py-1 rounded ${website.notify_on_down ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'} hover:bg-opacity-80 transition-colors">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                                    d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9">
-                                </path>
-                            </svg>
-                            ${website.notify_on_down ? 'Notifications On' : 'Notifications Off'}
-                        </button>
-                        <button onclick="removeWebsite('${website.url}')"
-                            class="text-red-500 hover:text-red-600 transition-colors">
-                            Remove
-                        </button>
-                    </div>
+                    ${website.server_info ? renderServerMetrics(website.server_info) : ''}
                 </div>
             `).join('');
         }
@@ -148,6 +232,17 @@
             }
         }
 
+        // Server Info Modal functions
+        function openServerInfoModal(url) {
+            document.getElementById('serverInfoUrl').value = url;
+            document.getElementById('serverInfoModal').classList.remove('hidden');
+        }
+
+        function closeServerInfoModal() {
+            document.getElementById('serverInfoModal').classList.add('hidden');
+            document.getElementById('serverInfoForm').reset();
+        }
+
         // Add website form submission
         document.getElementById('addWebsiteForm').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -175,6 +270,39 @@
             } catch (error) {
                 console.error('Error adding website:', error);
                 alert('Failed to add website. Please try again.');
+            } finally {
+                submitButton.textContent = originalText;
+                submitButton.disabled = false;
+            }
+        });
+
+        // Server Info form submission
+        document.getElementById('serverInfoForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const submitButton = e.target.querySelector('button[type="submit"]');
+            const originalText = submitButton.textContent;
+            
+            try {
+                submitButton.textContent = 'Saving...';
+                submitButton.disabled = true;
+                const response = await fetch('/add-server-info', {
+                    method: 'POST',
+                    body: formData
+                });
+                if (response.status === 303) {
+                    // Redirect to login if not authenticated
+                    window.location.href = '/login';
+                    return;
+                }
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                closeServerInfoModal();
+                await updateWebsiteList();
+            } catch (error) {
+                console.error('Error adding server info:', error);
+                alert('Failed to add server information. Please try again.');
             } finally {
                 submitButton.textContent = originalText;
                 submitButton.disabled = false;

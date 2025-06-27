@@ -2,7 +2,7 @@
 PASSWORD = "admin123"  # You can change this password to anything you want 
 
 # Email Configuration
-SMTP_SERVER = ""
+SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SMTP_USERNAME = ""  # Replace with your email
 SMTP_PASSWORD = ""  # Replace with your app password

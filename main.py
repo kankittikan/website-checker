@@ -5,23 +5,67 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 import aiohttp
 import asyncio
-from datetime import datetime
+from datetime import datetime, UTC, timedelta
 import os
 import ssl
 import certifi
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from database import Website, get_db, init_db
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import selectinload
+from database import Website, ServerInfo, get_db, init_db, SQLALCHEMY_DATABASE_URL
 import logging
 from config import PASSWORD
 from starlette.middleware.sessions import SessionMiddleware
-from email_sender import send_notification_email
+from email_sender import send_notification_email, send_resource_alert
+from server_monitor import get_server_metrics
+from contextlib import asynccontextmanager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+# Constants
+RESOURCE_ALERT_THRESHOLD = 90.0  # Send alert when resource usage exceeds 90%
+RESOURCE_ALERT_COOLDOWN = 3600  # Only send one alert per hour (in seconds)
+
+# Create async engine and session maker for background task
+background_engine = create_async_engine(
+    SQLALCHEMY_DATABASE_URL, 
+    connect_args={"check_same_thread": False},
+    pool_pre_ping=True
+)
+BackgroundAsyncSessionLocal = async_sessionmaker(
+    background_engine, 
+    class_=AsyncSession, 
+    expire_on_commit=False
+)
+
+# Global variable to store the background task
+background_task = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize database
+    await init_db()
+    
+    # Start background task
+    global background_task
+    background_task = asyncio.create_task(check_all_websites_background())
+    logger.info("Started background website checking task")
+    
+    yield
+    
+    # Cancel background task
+    if background_task:
+        background_task.cancel()
+        try:
+            await background_task
+        except asyncio.CancelledError:
+            pass
+    logger.info("Stopped background website checking task")
+    await background_engine.dispose()
+
+app = FastAPI(lifespan=lifespan)
 
 # Add session middleware
 app.add_middleware(
@@ -42,9 +86,6 @@ templates = Jinja2Templates(directory="templates")
 # Create SSL context
 ssl_context = ssl.create_default_context(cafile=certifi.where())
 
-# Global variable to store the background task
-background_task = None
-
 # Check if user is authenticated
 async def is_authenticated(request: Request):
     if not request.session.get("authenticated"):
@@ -53,6 +94,22 @@ async def is_authenticated(request: Request):
             headers={"Location": "/login"},
         )
     return True
+
+async def check_and_send_resource_alert(
+    website: Website,
+    server: ServerInfo,
+    resource_type: str,
+    usage: float,
+    last_alert: datetime | None
+) -> bool:
+    """Check if resource usage exceeds threshold and send alert if needed"""
+    if usage >= RESOURCE_ALERT_THRESHOLD and (
+        not last_alert or 
+        (datetime.now(UTC) - last_alert.replace(tzinfo=UTC)).total_seconds() > RESOURCE_ALERT_COOLDOWN
+    ):
+        if await send_resource_alert(website.url, server.host, resource_type, usage):
+            return True
+    return False
 
 async def check_website_status(session: aiohttp.ClientSession, url: str) -> bool:
     headers = {
@@ -78,12 +135,21 @@ async def check_all_websites_background():
     """Background task to check all websites periodically"""
     while True:
         try:
-            # Get a new database session
-            async for db in get_db():
+            # Create a new session for each iteration
+            async with BackgroundAsyncSessionLocal() as db:
                 try:
-                    # Get all websites
-                    result = await db.execute(select(Website))
+                    # Get all websites with server info in a single query
+                    result = await db.execute(
+                        select(Website)
+                        .options(selectinload(Website.server_info))
+                        .execution_options(populate_existing=True)
+                    )
                     websites = result.scalars().all()
+                    
+                    if not websites:
+                        logger.info("No websites to check")
+                        await asyncio.sleep(60)
+                        continue
                     
                     # Check status for all websites
                     async with aiohttp.ClientSession() as session:
@@ -92,51 +158,54 @@ async def check_all_websites_background():
                         
                         # Update status in database and send notifications if needed
                         for website, status in zip(websites, results):
-                            old_status = website.status
                             website.status = status
-                            website.last_checked = datetime.utcnow()
+                            website.last_checked = datetime.now(UTC)
+                            
+                            # Check server metrics if server info is available
+                            if website.server_info:
+                                server = website.server_info
+                                cpu, ram, disk = await get_server_metrics(
+                                    server.host,
+                                    server.username,
+                                    server.password,
+                                    server.ssh_key_path
+                                )
+                                
+                                if cpu is not None:
+                                    server.cpu_usage = cpu
+                                    server.ram_usage = ram
+                                    server.disk_usage = disk
+                                    server.last_checked = datetime.now(UTC)
+                                    
+                                    # Check and send resource alerts if needed
+                                    if await check_and_send_resource_alert(website, server, "CPU", cpu, server.last_cpu_alert):
+                                        server.last_cpu_alert = datetime.now(UTC)
+                                    
+                                    if await check_and_send_resource_alert(website, server, "RAM", ram, server.last_ram_alert):
+                                        server.last_ram_alert = datetime.now(UTC)
+                                    
+                                    if await check_and_send_resource_alert(website, server, "Disk", disk, server.last_disk_alert):
+                                        server.last_disk_alert = datetime.now(UTC)
                             
                             # Send notification if website is down and notifications are enabled
                             if website.notify_on_down and not status and (
                                 not website.last_notification_sent or 
-                                (datetime.utcnow() - website.last_notification_sent).total_seconds() > 3600
+                                (datetime.now(UTC) - website.last_notification_sent.replace(tzinfo=UTC)).total_seconds() > 3600
                             ):
                                 if await send_notification_email(website.url, status):
-                                    website.last_notification_sent = datetime.utcnow()
+                                    website.last_notification_sent = datetime.now(UTC)
                         
                         await db.commit()
                         logger.info(f"Auto-checked {len(websites)} websites")
                 except Exception as e:
                     logger.error(f"Error in background check: {str(e)}")
-                    continue
-                
+                    await db.rollback()
+                    
         except Exception as e:
             logger.error(f"Major error in background check: {str(e)}")
         
         # Wait for 60 seconds before next check
         await asyncio.sleep(60)
-
-@app.on_event("startup")
-async def startup_event():
-    # Initialize database
-    await init_db()
-    
-    # Start background task
-    global background_task
-    background_task = asyncio.create_task(check_all_websites_background())
-    logger.info("Started background website checking task")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    # Cancel background task
-    global background_task
-    if background_task:
-        background_task.cancel()
-        try:
-            await background_task
-        except asyncio.CancelledError:
-            pass
-    logger.info("Stopped background website checking task")
 
 @app.get("/login")
 async def login_page(request: Request):
@@ -217,20 +286,72 @@ async def toggle_notification(
         return {"success": True, "notify_on_down": website.notify_on_down}
     return {"success": False}
 
+@app.post("/add-server-info")
+async def add_server_info(
+    url: str = Form(...),
+    host: str = Form(...),
+    username: str = Form(...),
+    password: str = Form(None),
+    ssh_key_path: str = Form(None),
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(is_authenticated)
+):
+    # Find the website with server info
+    result = await db.execute(
+        select(Website)
+        .options(selectinload(Website.server_info))
+        .where(Website.url == url)
+    )
+    website = result.scalar_one_or_none()
+    
+    if not website:
+        raise HTTPException(status_code=404, detail="Website not found")
+    
+    # Create or update server info
+    if website.server_info:
+        server_info = website.server_info
+        server_info.host = host
+        server_info.username = username
+        if password:
+            server_info.password = password
+        if ssh_key_path:
+            server_info.ssh_key_path = ssh_key_path
+    else:
+        server_info = ServerInfo(
+            host=host,
+            username=username,
+            password=password,
+            ssh_key_path=ssh_key_path
+        )
+        website.server_info = server_info
+    
+    await db.commit()
+    return {"success": True}
+
 @app.get("/check-status")
 async def check_status(
     db: AsyncSession = Depends(get_db),
     _: bool = Depends(is_authenticated)
 ):
-    # Return current status from database including notification settings
-    result = await db.execute(select(Website))
+    # Return current status from database including server metrics
+    result = await db.execute(
+        select(Website)
+        .options(selectinload(Website.server_info))
+    )
     websites = result.scalars().all()
     return [
         {
             "url": website.url,
             "status": website.status,
             "last_checked": website.last_checked.isoformat(),
-            "notify_on_down": website.notify_on_down
+            "notify_on_down": website.notify_on_down,
+            "server_info": {
+                "host": website.server_info.host,
+                "cpu_usage": website.server_info.cpu_usage,
+                "ram_usage": website.server_info.ram_usage,
+                "disk_usage": website.server_info.disk_usage,
+                "last_checked": website.server_info.last_checked.isoformat()
+            } if website.server_info else None
         }
         for website in websites
     ]
