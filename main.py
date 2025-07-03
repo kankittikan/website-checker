@@ -99,11 +99,18 @@ async def check_and_send_resource_alert(
     last_alert: datetime | None
 ) -> bool:
     """Check if resource usage exceeds threshold and send alert if needed"""
-    if usage >= RESOURCE_ALERT_THRESHOLD and (
+    # Get the appropriate threshold based on resource type
+    threshold = {
+        "CPU": server.cpu_threshold,
+        "RAM": server.ram_threshold,
+        "Disk": server.disk_threshold
+    }[resource_type]
+    
+    if usage >= threshold and (
         not last_alert or 
         (datetime.now(UTC) - last_alert.replace(tzinfo=UTC)).total_seconds() > RESOURCE_ALERT_COOLDOWN
     ):
-        if await send_resource_alert(website.url, server.host, resource_type, usage, RESOURCE_ALERT_THRESHOLD):
+        if await send_resource_alert(website.url, server.host, resource_type, usage, threshold):
             return True
     return False
 
@@ -153,9 +160,11 @@ async def check_all_websites_background():
                         results = await asyncio.gather(*tasks)
                         
                         # Update status in database and send notifications if needed
+                        current_time = datetime.now(UTC)
+                        
                         for website, status in zip(websites, results):
                             website.status = status
-                            website.last_checked = datetime.now(UTC)
+                            website.last_checked = current_time
                             
                             # Check server metrics if server info is available
                             if website.server_info:
@@ -171,27 +180,27 @@ async def check_all_websites_background():
                                     server.cpu_usage = cpu
                                     server.ram_usage = ram
                                     server.disk_usage = disk
-                                    server.last_checked = datetime.now(UTC)
+                                    server.last_checked = current_time
                                     
                                     # Only send resource alerts if notifications are enabled
                                     if website.notify_on_down:
                                         # Check and send resource alerts if needed
                                         if await check_and_send_resource_alert(website, server, "CPU", cpu, server.last_cpu_alert):
-                                            server.last_cpu_alert = datetime.now(UTC)
+                                            server.last_cpu_alert = current_time
                                         
                                         if await check_and_send_resource_alert(website, server, "RAM", ram, server.last_ram_alert):
-                                            server.last_ram_alert = datetime.now(UTC)
+                                            server.last_ram_alert = current_time
                                         
                                         if await check_and_send_resource_alert(website, server, "Disk", disk, server.last_disk_alert):
-                                            server.last_disk_alert = datetime.now(UTC)
+                                            server.last_disk_alert = current_time
                             
                             # Send notification if website is down and notifications are enabled
                             if website.notify_on_down and not status and (
                                 not website.last_notification_sent or 
-                                (datetime.now(UTC) - website.last_notification_sent.replace(tzinfo=UTC)).total_seconds() > 3600
+                                (current_time - website.last_notification_sent.replace(tzinfo=UTC)).total_seconds() > 3600
                             ):
                                 if await send_notification_email(website.url, status):
-                                    website.last_notification_sent = datetime.now(UTC)
+                                    website.last_notification_sent = current_time
                         
                         await db.commit()
                         logger.info(f"Auto-checked {len(websites)} websites")
@@ -291,6 +300,9 @@ async def add_server_info(
     username: str = Form(...),
     password: str = Form(None),
     ssh_key_path: str = Form(None),
+    cpu_threshold: float = Form(90.0),
+    ram_threshold: float = Form(90.0),
+    disk_threshold: float = Form(90.0),
     db: AsyncSession = Depends(get_db),
     _: bool = Depends(is_authenticated)
 ):
@@ -310,6 +322,9 @@ async def add_server_info(
         server_info = website.server_info
         server_info.host = host
         server_info.username = username
+        server_info.cpu_threshold = cpu_threshold
+        server_info.ram_threshold = ram_threshold
+        server_info.disk_threshold = disk_threshold
         if password:
             server_info.password = password
         if ssh_key_path:
@@ -319,7 +334,10 @@ async def add_server_info(
             host=host,
             username=username,
             password=password,
-            ssh_key_path=ssh_key_path
+            ssh_key_path=ssh_key_path,
+            cpu_threshold=cpu_threshold,
+            ram_threshold=ram_threshold,
+            disk_threshold=disk_threshold
         )
         website.server_info = server_info
     
@@ -337,22 +355,29 @@ async def check_status(
         .options(selectinload(Website.server_info))
     )
     websites = result.scalars().all()
-    return [
-        {
+    
+    response_data = []
+    for website in websites:
+        website_data = {
             "url": website.url,
             "status": website.status,
             "last_checked": website.last_checked.isoformat(),
             "notify_on_down": website.notify_on_down,
             "server_info": {
                 "host": website.server_info.host,
+                "username": website.server_info.username,
                 "cpu_usage": website.server_info.cpu_usage,
                 "ram_usage": website.server_info.ram_usage,
                 "disk_usage": website.server_info.disk_usage,
+                "cpu_threshold": website.server_info.cpu_threshold,
+                "ram_threshold": website.server_info.ram_threshold,
+                "disk_threshold": website.server_info.disk_threshold,
                 "last_checked": website.server_info.last_checked.isoformat()
             } if website.server_info else None
         }
-        for website in websites
-    ]
+        response_data.append(website_data)
+    
+    return response_data
 
 if __name__ == "__main__":
     import uvicorn

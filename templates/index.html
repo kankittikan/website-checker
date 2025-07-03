@@ -63,48 +63,71 @@
     </div>
 
     <!-- Server Info Modal -->
-    <div id="serverInfoModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-        <div class="bg-white rounded-lg p-6 w-full max-w-lg">
-            <h3 class="text-xl font-semibold mb-4">Add Server Information</h3>
-            <form id="serverInfoForm">
-                <input type="hidden" id="serverInfoUrl" name="url">
-                <div class="space-y-4">
+    <div id="serverInfoModal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full">
+        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div class="mt-3">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Server Information</h3>
+                <form id="serverInfoForm" class="space-y-4">
+                    <input type="hidden" id="serverInfoUrl" name="url">
+                    
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Host</label>
                         <input type="text" name="host" required
-                            class="mt-1 w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            placeholder="Server IP or hostname">
+                            class="mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
                     </div>
+                    
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Username</label>
                         <input type="text" name="username" required
-                            class="mt-1 w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            placeholder="SSH username">
+                            class="mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
                     </div>
+                    
                     <div>
-                        <label class="block text-sm font-medium text-gray-700">Password (optional)</label>
+                        <label class="block text-sm font-medium text-gray-700">Password (Optional)</label>
                         <input type="password" name="password"
-                            class="mt-1 w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            placeholder="SSH password">
+                            class="mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
                     </div>
+                    
                     <div>
-                        <label class="block text-sm font-medium text-gray-700">SSH Key Path (optional)</label>
+                        <label class="block text-sm font-medium text-gray-700">SSH Key Path (Optional)</label>
                         <input type="text" name="ssh_key_path"
-                            class="mt-1 w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            placeholder="/path/to/ssh/key">
+                            class="mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
                     </div>
-                </div>
-                <div class="mt-6 flex justify-end gap-4">
-                    <button type="button" onclick="closeServerInfoModal()"
-                        class="px-4 py-2 border rounded-lg hover:bg-gray-50">
-                        Cancel
-                    </button>
-                    <button type="submit"
-                        class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
-                        Save
-                    </button>
-                </div>
-            </form>
+
+                    <div class="border-t pt-4 mt-4">
+                        <h4 class="text-sm font-medium text-gray-700 mb-2">Resource Alert Thresholds</h4>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">CPU Threshold (%)</label>
+                            <input type="number" name="cpu_threshold" min="0" max="100" value="90" required
+                                class="mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        
+                        <div class="mt-2">
+                            <label class="block text-sm font-medium text-gray-700">RAM Threshold (%)</label>
+                            <input type="number" name="ram_threshold" min="0" max="100" value="90" required
+                                class="mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                        
+                        <div class="mt-2">
+                            <label class="block text-sm font-medium text-gray-700">Disk Threshold (%)</label>
+                            <input type="number" name="disk_threshold" min="0" max="100" value="90" required
+                                class="mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500">
+                        </div>
+                    </div>
+                    
+                    <div class="flex justify-end gap-4 mt-4">
+                        <button type="button" onclick="closeServerInfoModal()"
+                            class="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition-colors">
+                            Cancel
+                        </button>
+                        <button type="submit"
+                            class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors">
+                            Save
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
     </div>
 
@@ -114,27 +137,24 @@
 
         // Function to format date to UTC+7
         function formatDate(isoString) {
-            const date = new Date(isoString);
-            // Add 7 hours to convert to UTC+7
-            const utc7Date = new Date(date.getTime() + (7 * 60 * 60 * 1000));
-            return utc7Date.toLocaleString('en-US', {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: false
-            }) + ' (UTC+7)';
+            if (!isoString) return 'Never';
+            
+            // Split the ISO string into components
+            const [datePart, timePart] = isoString.split('T');
+            const [year, month, day] = datePart.split('-');
+            const [hours, minutes, seconds] = timePart.split(':');
+            
+            // Return formatted string
+            return `${year}-${month}-${day} ${hours}:${minutes}:${seconds} UTC`;
         }
 
         // Function to show loading state
         function setLoading(loading) {
-            const loadingOverlay = document.getElementById('loadingOverlay');
+            const overlay = document.getElementById('loadingOverlay');
             if (loading) {
-                loadingOverlay.classList.remove('hidden');
+                overlay.classList.remove('hidden');
             } else {
-                loadingOverlay.classList.add('hidden');
+                overlay.classList.add('hidden');
             }
         }
 
@@ -143,9 +163,24 @@
             if (!serverInfo) return '';
             
             const metrics = [
-                { label: 'CPU', value: serverInfo.cpu_usage, color: serverInfo.cpu_usage > 80 ? 'red' : 'green' },
-                { label: 'RAM', value: serverInfo.ram_usage, color: serverInfo.ram_usage > 80 ? 'red' : 'green' },
-                { label: 'Disk', value: serverInfo.disk_usage, color: serverInfo.disk_usage > 80 ? 'red' : 'green' }
+                { 
+                    label: 'CPU', 
+                    value: serverInfo.cpu_usage, 
+                    threshold: serverInfo.cpu_threshold,
+                    color: serverInfo.cpu_usage > serverInfo.cpu_threshold ? 'red' : 'green' 
+                },
+                { 
+                    label: 'RAM', 
+                    value: serverInfo.ram_usage, 
+                    threshold: serverInfo.ram_threshold,
+                    color: serverInfo.ram_usage > serverInfo.ram_threshold ? 'red' : 'green' 
+                },
+                { 
+                    label: 'Disk', 
+                    value: serverInfo.disk_usage, 
+                    threshold: serverInfo.disk_threshold,
+                    color: serverInfo.disk_usage > serverInfo.disk_threshold ? 'red' : 'green' 
+                }
             ];
 
             return `
@@ -155,6 +190,9 @@
                             <span class="text-sm text-gray-600">${metric.label}</span>
                             <span class="text-${metric.color}-600 font-semibold">
                                 ${metric.value ? metric.value.toFixed(1) + '%' : 'N/A'}
+                            </span>
+                            <span class="text-xs text-gray-500">
+                                Threshold: ${metric.threshold}%
                             </span>
                         </div>
                     `).join('')}
@@ -234,7 +272,28 @@
 
         // Server Info Modal functions
         function openServerInfoModal(url) {
+            const website = websitesData.find(w => w.url === url);
             document.getElementById('serverInfoUrl').value = url;
+            
+            // Pre-fill existing values if available
+            const form = document.getElementById('serverInfoForm');
+            if (website && website.server_info) {
+                form.elements['host'].value = website.server_info.host || '';
+                form.elements['username'].value = website.server_info.username || '';
+                form.elements['cpu_threshold'].value = website.server_info.cpu_threshold || 90;
+                form.elements['ram_threshold'].value = website.server_info.ram_threshold || 90;
+                form.elements['disk_threshold'].value = website.server_info.disk_threshold || 90;
+            } else {
+                // Reset form if no existing server info
+                form.elements['host'].value = '';
+                form.elements['username'].value = '';
+                form.elements['password'].value = '';
+                form.elements['ssh_key_path'].value = '';
+                form.elements['cpu_threshold'].value = 90;
+                form.elements['ram_threshold'].value = 90;
+                form.elements['disk_threshold'].value = 90;
+            }
+            
             document.getElementById('serverInfoModal').classList.remove('hidden');
         }
 
