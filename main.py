@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import selectinload
 from database import Website, ServerInfo, get_db, init_db, SQLALCHEMY_DATABASE_URL
 import logging
-from config import PASSWORD
+from config import PASSWORD, RESOURCE_ALERT_THRESHOLD, RESOURCE_ALERT_COOLDOWN
 from starlette.middleware.sessions import SessionMiddleware
 from email_sender import send_notification_email, send_resource_alert
 from server_monitor import get_server_metrics
@@ -23,10 +23,6 @@ from contextlib import asynccontextmanager
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Constants
-RESOURCE_ALERT_THRESHOLD = 90.0  # Send alert when resource usage exceeds 90%
-RESOURCE_ALERT_COOLDOWN = 3600  # Only send one alert per hour (in seconds)
 
 # Create async engine and session maker for background task
 background_engine = create_async_engine(
@@ -107,7 +103,7 @@ async def check_and_send_resource_alert(
         not last_alert or 
         (datetime.now(UTC) - last_alert.replace(tzinfo=UTC)).total_seconds() > RESOURCE_ALERT_COOLDOWN
     ):
-        if await send_resource_alert(website.url, server.host, resource_type, usage):
+        if await send_resource_alert(website.url, server.host, resource_type, usage, RESOURCE_ALERT_THRESHOLD):
             return True
     return False
 
@@ -177,15 +173,17 @@ async def check_all_websites_background():
                                     server.disk_usage = disk
                                     server.last_checked = datetime.now(UTC)
                                     
-                                    # Check and send resource alerts if needed
-                                    if await check_and_send_resource_alert(website, server, "CPU", cpu, server.last_cpu_alert):
-                                        server.last_cpu_alert = datetime.now(UTC)
-                                    
-                                    if await check_and_send_resource_alert(website, server, "RAM", ram, server.last_ram_alert):
-                                        server.last_ram_alert = datetime.now(UTC)
-                                    
-                                    if await check_and_send_resource_alert(website, server, "Disk", disk, server.last_disk_alert):
-                                        server.last_disk_alert = datetime.now(UTC)
+                                    # Only send resource alerts if notifications are enabled
+                                    if website.notify_on_down:
+                                        # Check and send resource alerts if needed
+                                        if await check_and_send_resource_alert(website, server, "CPU", cpu, server.last_cpu_alert):
+                                            server.last_cpu_alert = datetime.now(UTC)
+                                        
+                                        if await check_and_send_resource_alert(website, server, "RAM", ram, server.last_ram_alert):
+                                            server.last_ram_alert = datetime.now(UTC)
+                                        
+                                        if await check_and_send_resource_alert(website, server, "Disk", disk, server.last_disk_alert):
+                                            server.last_disk_alert = datetime.now(UTC)
                             
                             # Send notification if website is down and notifications are enabled
                             if website.notify_on_down and not status and (

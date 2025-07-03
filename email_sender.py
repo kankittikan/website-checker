@@ -39,7 +39,7 @@ async def send_resource_alert(
     host: str,
     resource_type: Literal["CPU", "RAM", "Disk"],
     usage: float,
-    threshold: float = 90.0
+    threshold: float
 ) -> bool:
     try:
         msg = MIMEMultipart()
